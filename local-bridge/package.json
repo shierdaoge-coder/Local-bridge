@@ -1,0 +1,26 @@
+{
+  "name": "local-bridge",
+  "version": "0.1.0-dev",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=24.0.0" },
+  "scripts": {
+    "test": "node --max-old-space-size=384 --test --test-isolation=none --test-concurrency=1 --test-timeout=30000 tests/*.test.mjs experimental/source-automation/*.test.mjs",
+    "start": "node scripts/daily-use.mjs supervise",
+    "build:codex": "node scripts/build-codex.mjs",
+    "build:dsh": "node scripts/build-dsh.mjs",
+    "build:service": "node experimental/source-automation/build-candidate.mjs"
+  },
+  "exports": {
+    ".": "./src/core.mjs",
+    "./delivery": "./src/delivery.mjs",
+    "./client": "./src/client.mjs",
+    "./indexer": "./src/indexer.mjs",
+    "./session-tools": "./src/session-tools.mjs",
+    "./mcp": "./src/mcp.mjs",
+    "./dsh": "./src/adapters/dsh.mjs",
+    "./codex": "./src/adapters/codex.mjs",
+    "./codex-gateway": "./src/codex-gateway.mjs",
+    "./dsh-gateway": "./src/dsh-gateway.mjs"
+  }
+}

@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>local-bridge · 会话桥</title><link rel="stylesheet" href="/style.css"><script type="module" src="/app.js"></script>
+</head>
+<body>
+  <main>
+    <header><span class="eyebrow">local-bridge</span><h1>会话桥</h1><p>同步与通讯共用投递通道，各端自行选择接收时机。</p></header>
+    <section id="login" class="panel"><h2>连接本地设置</h2><p>输入本地服务的管理凭据。凭据只保留在当前标签页。</p>
+      <form id="login-form"><label for="credential">管理凭据</label><div class="login-row"><input id="credential" type="password" autocomplete="off" required><button type="submit">连接</button></div></form>
+    </section>
+    <section id="workspace" hidden><div class="toolbar"><span id="summary"></span><div><button id="refresh" class="secondary">刷新</button><button id="logout" class="secondary">断开设置页</button></div></div><div id="endpoints" class="cards"></div></section>
+    <p id="notice" role="status" aria-live="polite"></p>
+    <footer>消息先保存再投递。关闭原文接收期间，原文可继续积压，重新开启后接续领取。当前为开发原型。</footer>
+  </main>
+  <template id="endpoint-template"><article class="panel endpoint">
+    <div class="card-top"><h2 class="harness"></h2><span class="status"></span></div>
+    <p class="identity"></p>
+    <label class="pause"><input name="receive_history" type="checkbox">接收对端原文</label>
+    <label>同步内容接收时机<select name="history_sync"><option value="next_turn">随下一轮接收</option><option value="idle_wake">空闲时主动唤醒</option></select></label>
+    <label>即时通讯<select name="message"><option value="next_turn">排队，随下一轮接收</option><option value="idle_wake">空闲时主动唤醒</option></select></label>
+    <label class="pause"><input name="paused" type="checkbox">暂停本端自动推送</label>
+    <p class="capability"></p><button class="save">保存设置</button><p class="saved" role="status"></p>
+  </article></template>
+</body>
+</html>
