@@ -1,19 +1,20 @@
-import { resolve, isAbsolute } from 'node:path';
+import { resolve, isAbsolute, dirname, join } from 'node:path';
 import { realpath } from 'node:fs/promises';
 import { CandidateCore } from './candidate-core.mjs';
 import { inspectSourceHeader } from './bounded-reader.mjs';
 import { createNaturalNativeRuntime } from './native-runtime.mjs';
 import { BoundedSourceIndexer, SourcePump } from './source-pump.mjs';
 import { createBridgeServer } from '../../src/server.mjs';
-import { insist, canonical } from '../../src/protocol.mjs';
+import { insist, canonical, settings } from '../../src/protocol.mjs';
+import { planNativeRelay, planSessionPairs } from '../../src/session-pairs.mjs';
 const setValue = values => canonical(values.map(canonical).sort());
 const grantValue = input => ({ id: input.id, from_id: input.from, to_id: input.to,
   content_types: [...input.content_types].sort(), kinds: [...(input.kinds ?? ['event', 'request', 'result', 'cancel'])].sort(),
   work_domains: [...(input.work_domains ?? ['text'])].sort(), allow_wake: 0, author_ref: input.author_ref });
 
-/** Shared service with bounded history sources and optional natural-turn adapters. */
+/** An independent service using explicitly bound archives, directions, and endpoints. */
 export async function createCandidateService({ directory, adminToken, workspace = 'local-bridge',
-  endpoints = [], archives = [], bindings = [], grants = [], subscriptions = [],
+  endpoints = [], archives = [], bindings = [], grants = [], subscriptions = [], sessionPairs = [], nativeTargets = {}, nativeRelay = false,
   queueLimits = {}, readerOptions = {}, pumpOptions = {}, nativeAdapters = false, historyBatchNotices = false,
   historyClaimMs, port = 0, logger = { error() {} } }, { batchScope } = {}) {
   insist(isAbsolute(directory), 'INVALID_INPUT', 'Candidate directory must be explicit and absolute');
@@ -21,6 +22,9 @@ export async function createCandidateService({ directory, adminToken, workspace 
   insist(Array.isArray(bindings) && bindings.length <= 64, 'INVALID_INPUT', 'Service accepts at most 64 explicit history sources');
   insist(typeof nativeAdapters === 'boolean', 'INVALID_INPUT', 'Native candidate mode must be explicit');
   insist(typeof historyBatchNotices === 'boolean', 'INVALID_INPUT', 'History batch notification mode must be boolean');
+  const pairPlan = planSessionPairs({ sessionPairs, endpoints, archives, bindings, grants, subscriptions });
+  ({ grants, subscriptions } = pairPlan);
+  const relayTargets = planNativeRelay({ nativeRelay, nativeAdapters, nativeTargets }, pairPlan.nativeDirections);
   const database = resolve(directory, 'candidate.sqlite');
   const activeDatabase = resolve(import.meta.dirname, '../../.runtime/bridge.sqlite');
   insist(database.toLowerCase() !== activeDatabase.toLowerCase(), 'CANDIDATE_DATABASE_REQUIRED', 'Candidate cannot open the active database');
@@ -30,20 +34,23 @@ export async function createCandidateService({ directory, adminToken, workspace 
     await core.configureStartup(async () => {
     if (Object.keys(queueLimits).length) core.setQueueLimits(adminToken, queueLimits);
     for (const input of endpoints) {
-      insist(input.settings?.history_sync !== 'idle_wake' && input.settings?.message !== 'idle_wake'
-        && !input.capabilities?.can_wake, 'WAKE_NOT_AUTHORIZED', 'This candidate has no native wake test scope');
+      const relayTarget = relayTargets.has(input.id);
+      const initialSettings = settings({ history_sync: 'next_turn', message: 'next_turn', ...input.settings });
+      insist(!input.capabilities?.can_wake && (relayTarget
+        || initialSettings.history_sync !== 'idle_wake' && initialSettings.message !== 'idle_wake'),
+      'WAKE_NOT_AUTHORIZED', 'Only a configured independent relay target can use idle wake');
       const existing = core.db.prepare('SELECT * FROM endpoints WHERE id=?').get(input.id);
       if (existing) {
         insist(existing.harness === input.harness && existing.native_session_id === input.native_session_id, 'SOURCE_IDENTITY_MISMATCH', 'Persisted endpoint identity differs');
         core.authenticateEndpoint(input.id, input.credential);
-        const { receive_history: savedReceive, ...savedPolicy } = JSON.parse(existing.settings);
-        const { receive_history: initialReceive, ...initialPolicy } = { history_sync: 'next_turn', message: 'next_turn', paused: false, ...input.settings };
+        const { receive_history: savedReceive, ...savedPolicy } = settings(JSON.parse(existing.settings));
+        const { receive_history: initialReceive, ...initialPolicy } = initialSettings;
         insist(canonical([...JSON.parse(existing.work_domains)].sort()) === canonical([...(input.work_domains ?? ['text'])].sort())
           && [savedReceive, initialReceive].every(value => value === undefined || typeof value === 'boolean')
-          && canonical(savedPolicy) === canonical(initialPolicy)
+          && (relayTarget || canonical(savedPolicy) === canonical(initialPolicy))
           && canonical(JSON.parse(existing.capabilities)) === canonical({ can_confirm_read: true, can_enqueue: false, can_wake: false, ...input.capabilities }),
         'NOT_AUTHORIZED', 'Persisted endpoint policy differs from explicit candidate configuration');
-      } else core.register(adminToken, { ...input, settings: { history_sync: 'next_turn', message: 'next_turn', ...input.settings },
+      } else core.register(adminToken, { ...input, settings: initialSettings,
         capabilities: { can_confirm_read: true, can_enqueue: false, can_wake: false, ...input.capabilities } });
     }
     for (const input of archives) {
@@ -89,23 +96,26 @@ export async function createCandidateService({ directory, adminToken, workspace 
       .map(s => ({ id: s.id, archive_id: s.archive_id, target_id: s.target_id, grant_id: s.grant_id }));
     insist(setValue(activeSubscriptions) === setValue([...expectedSubscriptions, ...preservedSubscriptions]), 'NOT_AUTHORIZED', 'Persisted active subscription directions differ from this explicit configuration');
     });
-    const indexer = new BoundedSourceIndexer({ core, adminToken, readerOptions: { maxVisibleRecords: 16, maxDecodedBytes: 64 * 1024, ...readerOptions } });
+    const indexer = new BoundedSourceIndexer({ core, adminToken, readerOptions: { maxVisibleRecords: 16, maxDecodedBytes: 64 * 1024, ...readerOptions,
+      ...(Object.keys(nativeTargets).length ? { nativeReceiptDirectory: join(dirname(directory), 'native-receipts') } : {}) } });
     if (nativeAdapters) nativeRuntime = createNaturalNativeRuntime({ core, historyBatchNotices });
     server = createBridgeServer({ core, adminToken, indexer, codex: nativeRuntime?.codex, dsh: nativeRuntime?.dsh, port, logger });
     const url = await server.listen();
     nativeRuntime?.setUrl(url);
     const latest = new Map(), errors = new Map();
-    pump = new SourcePump({ ...pumpOptions, indexer,
-      sources: bindings.map(input => { const b = core.binding(adminToken, input.archive_id); return { archive_id: b.archive_id, path: b.path }; }),
-      onResult: (id, result) => { latest.set(id, result); errors.delete(id); },
-      onError: (id, error) => { errors.set(id, error.code ?? 'UNKNOWN'); } });
-    core.on('capacity', target => {
-      for (const row of core.db.prepare("SELECT s.archive_id FROM history_subscriptions s JOIN archive_sources a ON a.archive_id=s.archive_id WHERE s.target_id=? AND s.enabled=1 AND a.status='paused_backpressure'").all(target))
-        pump.resume(row.archive_id);
-    });
-    await pump.startWatching();
+    if (bindings.length) {
+      pump = new SourcePump({ ...pumpOptions, indexer,
+        sources: bindings.map(input => { const b = core.binding(adminToken, input.archive_id); return { archive_id: b.archive_id, path: b.path }; }),
+        onResult: (id, result) => { latest.set(id, result); errors.delete(id); },
+        onError: (id, error) => { errors.set(id, error.code ?? 'UNKNOWN'); } });
+      core.on('capacity', target => {
+        for (const row of core.db.prepare("SELECT s.archive_id FROM history_subscriptions s JOIN archive_sources a ON a.archive_id=s.archive_id WHERE s.target_id=? AND s.enabled=1 AND a.status='paused_backpressure'").all(target))
+          pump.resume(row.archive_id);
+      });
+      await pump.startWatching();
+    }
     let closed = false;
     return { core, server, indexer, pump, url, database, latest, errors, nativeRuntime,
-      async close() { if (closed) return; closed = true; await pump.close(); await nativeRuntime?.close(); await server.close(); core.close(); } };
+      async close() { if (closed) return; closed = true; await pump?.close(); await nativeRuntime?.close(); await server.close(); core.close(); } };
   } catch (error) { await pump?.close(); await nativeRuntime?.close(); await server?.close(); core.close(); throw error; }
 }

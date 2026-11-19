@@ -177,10 +177,13 @@ export class TransportCore extends EventEmitter {
       .run(input.id, input.harness, input.native_session_id, canonical(domains), canonical(settings(input.settings ?? {})), canonical(capabilities(input.capabilities)), digest(credential));
     return { ...this.endpoint(input.id), credential };
   }
-  connect(id, credential) {
+  connect(id, credential, { requireOffline = false } = {}) {
+    insist(typeof requireOffline === 'boolean', 'INVALID_INPUT', 'The offline connection option must be boolean');
     const now = this.now();
     const result = this._tx(() => {
       const row = this._endpoint(id); insist(same(credential, row.credential_hash), 'UNAUTHORIZED', 'Invalid endpoint credential');
+      insist(!requireOffline || !row.connection_hash || row.lease_until <= now,
+        'ENDPOINT_ONLINE', 'An active host connection already owns this endpoint');
       const connectionToken = token(), epoch = row.epoch + 1;
       this.db.prepare('UPDATE endpoints SET epoch=?,connection_hash=?,lease_until=? WHERE id=?').run(epoch, digest(connectionToken), now + this.leaseMs, id);
       this.db.prepare("UPDATE messages SET claim_epoch=NULL,claim_hash=NULL,claim_until=NULL WHERE to_id=? AND processing!='handled'").run(id);

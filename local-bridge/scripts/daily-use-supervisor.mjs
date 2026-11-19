@@ -1,6 +1,6 @@
 import { fork } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { appendFile, readFile } from 'node:fs/promises';
+import { appendFile, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -17,6 +17,14 @@ const errorCode = error => {
   const value = typeof error?.code === 'string' ? error.code : error?.cause?.code ?? error?.name;
   return typeof value === 'string' && /^[A-Za-z0-9_]+$/.test(value) ? value : 'UNKNOWN';
 };
+
+export async function saveState(directory, name, state) {
+  const target = join(directory, name);
+  const staged = target + '.' + randomUUID() + '.tmp';
+  await writeFile(staged, JSON.stringify(state) + '\n', { flag: 'wx', mode: 0o600, flush: true });
+  try { await rename(staged, target); }
+  catch (error) { await unlink(staged); throw error; }
+}
 
 async function readState(directory, file, optional = false) {
   try { return JSON.parse((await readFile(join(directory, file), 'utf8')).replace(/^\uFEFF/, '')); }

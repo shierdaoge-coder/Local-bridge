@@ -27,6 +27,8 @@ node scripts/install-dsh.mjs --source "ABSOLUTE_BUILT_DSH_DIRECTORY" --profile-d
 
 ## 由 DSH 启动共享服务
 
+支持 DSH 0.2.1-rc.3 与 0.2.2-rc.3。新安装使用 [共享服务](SHARED-SERVICE.md) 的 `service_directory` 配置。已有安装可继续使用下面的 `trial_directory` 设置。
+
 在 DSH 的 `bridge.json` 所在目录创建私密 `service-start.json`。`ABSOLUTE_PREPARED_SERVICE_DIRECTORY` 取自共享服务 `prepare` 命令输出的 `directory` 字段。`ABSOLUTE_NODE_EXECUTABLE` 是 Node 24 可执行文件的绝对路径，可用 `node -p "process.execPath"` 查看。
 
 ```json

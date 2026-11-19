@@ -1,5 +1,4 @@
-import { fileURLToPath } from 'node:url';
-import { join, resolve } from 'node:path';
+import { join } from 'node:path';
 import { BridgeClient } from './client.mjs';
 import { loadCodexConfig } from './codex-config.mjs';
 import { sessionToolDefinitions } from './session-tools.mjs';
@@ -7,6 +6,8 @@ import { McpToolSession, serveMcpStdio } from './mcp.mjs';
 import { object, insist } from './protocol.mjs';
 import { decodeApprovalProof, isLegacyTicket } from './codex-approval.mjs';
 import { createHistorySync, historySyncPython } from './history-sync-host.mjs';
+import { createServiceStarter } from './service-start.mjs';
+import { isMainModule } from './entrypoint.mjs';
 
 export class CodexMcpProxy {
   constructor({ client, heartbeatClient = client, historyClient = client, config = null, getConfig = async () => config, historySync = createHistorySync() }) {
@@ -64,18 +65,33 @@ async function main() {
   const config = await loadCodexConfig();
   const base = process.env.LOCAL_BRIDGE_URL ?? config?.service_url ?? 'http://127.0.0.1:4776';
   const localClient = new BridgeClient(base, { timeoutMs: 2000 });
+  const bindingFile = process.env.LOCAL_BRIDGE_CONFIG ?? (process.env.PLUGIN_DATA ? join(process.env.PLUGIN_DATA, 'bridge.json') : null);
+  const starter = await createServiceStarter({ harness: 'codex', bindingFile, serviceUrl: localClient.base,
+    bindings: new Map(Object.entries(config?.bindings ?? {})) }).catch(() => {
+    process.stderr.write('local-bridge service auto-start is unavailable.\n');
+    return null;
+  });
   const proxy = new CodexMcpProxy({ client: new BridgeClient(base), heartbeatClient: localClient, historyClient: localClient,
     historySync: createHistorySync({
-      python: await historySyncPython(process.env.LOCAL_BRIDGE_CONFIG ?? (process.env.PLUGIN_DATA ? join(process.env.PLUGIN_DATA, 'bridge.json') : null)),
+      python: await historySyncPython(bindingFile),
     }),
     getConfig: async () => {
       const current = await loadCodexConfig();
       return current ? { ...current, service_url: process.env.LOCAL_BRIDGE_URL ?? current.service_url ?? base } : null;
     },
   });
+  async function observeService() {
+    if (starter) {
+      try { await localClient.request('/api/health'); starter.onConnected(); }
+      catch (error) { if (error.cause?.code === 'ECONNREFUSED') starter.onRefused(); }
+    }
+    await proxy.sendHeartbeats();
+  }
   let sending = null;
-  const timer = setInterval(() => { if (!sending) sending = proxy.sendHeartbeats().finally(() => { sending = null; }); }, 10_000); timer.unref();
+  const tick = () => { if (!sending) sending = observeService().finally(() => { sending = null; }); };
+  const timer = setInterval(tick, 10_000); timer.unref();
+  tick();
   try { await serveMcpStdio({ input: process.stdin, output: process.stdout, session: new McpToolSession({ bridge: proxy }) }); }
-  finally { clearInterval(timer); await sending; }
+  finally { clearInterval(timer); starter?.close(); await sending; }
 }
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main().catch(() => { process.stderr.write('local-bridge MCP could not start.\n'); process.exitCode = 1; });
+if (isMainModule(import.meta.url)) main().catch(() => { process.stderr.write('local-bridge MCP could not start.\n'); process.exitCode = 1; });

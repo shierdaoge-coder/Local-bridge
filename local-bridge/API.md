@@ -33,6 +33,7 @@ X-Bridge-Epoch: <当前连接代次>
 | POST /api/history-subscriptions | 管理员 | 登记来源→接收端的已有授权并回填已索引原文 |
 | POST /api/sources/:id/scan | 管理员 | 显式扫描有限页，原子提交索引／扇出／检查点 |
 | POST /api/connect | 端点永久凭据 | 建立当前连接 |
+| POST /api/disconnect | 当前连接 | 释放当前连接 |
 | GET /api/session | 当前连接 | 查询当前绑定的原生会话和设置，不返回凭据 |
 | POST /api/heartbeat | 当前连接 | 延续租约 |
 | POST /api/publish | 当前连接 | 两类内容共用的持久入队入口 |

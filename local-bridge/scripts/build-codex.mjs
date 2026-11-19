@@ -1,6 +1,7 @@
 import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { serviceBundleFiles } from './service-bundle.mjs';
 
 const project = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const node = process.execPath;
@@ -17,8 +18,8 @@ return { hooks: {
   PreToolUse: [{ matcher: diagnosticHooks ? '.*' : '^mcp__local_bridge__bridge_.*$', hooks: [{ type: 'command', command: hookCommand, commandWindows: hookCommand, timeout: 5 }] }]
 } };
 }
-const base = { name: plugin, version: '0.1.8-dev', description: 'Local shared history synchronization and event messaging for registered sessions.', extensions: { 'com.openai': { hooks: './hooks/hooks.json', interface: { displayName: plugin } } } };
-const configExample = { service_url: 'http://127.0.0.1:4776', bindings: {} };
+const base = { name: plugin, version: '0.1.12-dev', description: 'Local shared history synchronization and event messaging for registered sessions.', extensions: { 'com.openai': { hooks: './hooks/hooks.json', interface: { displayName: plugin } } } };
+const configExample = { service_url: 'http://127.0.0.1:4780', bindings: {} };
 function packageFiles(root, diagnosticHooks, pluginData) {
 const mcp = { mcpServers: { local_bridge: { type: 'stdio', command: node, args: [path.join(root, 'src/codex-mcp.mjs')], cwd: root,
   ...(pluginData ? { env: { LOCAL_BRIDGE_CONFIG: path.join(pluginData, 'bridge.json') } } : {}),
@@ -40,7 +41,7 @@ return new Map([
 
 将占位符换成所选会话的 UUID 和目标机器上的绝对路径。ABSOLUTE_CODEX_PLUGIN_DATA 对应宿主提供的 PLUGIN_DATA 目录。工作目录和归档文件路径取自该会话的 cwd 和 transcript_path。
 
-与接入同一共享服务有关的步骤见源码目录中的 CODEX-SETUP.md。
+与接入同一共享服务有关的步骤见源码目录中的 CODEX-SETUP.md。使用本包的共享服务入口时，参见 SHARED-SERVICE.md。
 `]
 ]);
 }
@@ -58,7 +59,9 @@ export async function build(output = parseArgs(process.argv.slice(2)), { diagnos
  await ensureFile(path.join(marketplace, 'marketplace.json'), JSON.stringify({ name: 'local-bridge', plugins: [{ name: plugin, source: { source: 'local', path: `./plugins/${plugin}` }, policy: { installation: 'AVAILABLE', authentication: 'ON_INSTALL' } }] }, null, 2) + '\n');
  const root = path.join(resolved, 'plugins', plugin);
  for (const [rel, body] of packageFiles(root, diagnosticHooks, pluginData)) await ensureFile(path.join(root, rel), body);
- for (const dir of ['src', 'web']) { const list=[]; await sourceFiles(path.join(project, dir), dir, list); for (const [rel, src] of list) { const data = await readFile(src); await ensureFile(path.join(root, rel), data); } }
+ const list = serviceBundleFiles.filter(rel => !rel.startsWith('src/') && !rel.startsWith('web/')).map(rel => [rel, path.join(project, rel)]);
+ for (const dir of ['src', 'web']) await sourceFiles(path.join(project, dir), dir, list);
+ for (const [rel, src] of list) await ensureFile(path.join(root, rel), await readFile(src));
  return resolved;
 }
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) build().then(p => console.log(`Built Codex plugin at ${p}`)).catch(e => { console.error(e.message); process.exitCode = 1; });

@@ -3,7 +3,7 @@ import { createRequire } from 'node:module';
 import { randomUUID } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 import { dirname, isAbsolute, join } from 'node:path';
-import { BridgeError, insist, keys, object, text } from './protocol.mjs';
+import { BridgeError, insist, keys, MAX_HISTORY_BATCH_BYTES, object, text } from './protocol.mjs';
 import { BridgeClient } from './client.mjs';
 import { DshDeliveryAdapter, dshHostContext, dshNotificationMessage } from './adapters/dsh.mjs';
 import { sessionToolDefinitions } from './session-tools.mjs';
@@ -43,7 +43,12 @@ async function readBindings(file) {
 }
 
 function toolDefinitions(bridges, configPath, settingsUrl) {
-  return sessionToolDefinitions({ historySync: true }).map(({ name, description, inputSchema }) => ({
+  const definitions = sessionToolDefinitions({ historySync: true });
+  const sync = definitions.find(tool => tool.name === 'bridge_sync_history');
+  delete sync.inputSchema.properties.budgetBytes;
+  sync.description += ` DSH reads up to ${MAX_HISTORY_BATCH_BYTES / 1024} KiB from the selected source in one batch. `
+    + 'If remaining_packets is positive, confirm only the returned batch and leave the rest for a later sync. For a smaller manual batch, use bridge_receive.';
+  return definitions.map(({ name, description, inputSchema }) => ({
     name, parameters: inputSchema,
     description: description + (name === 'bridge_publish' ? ' A pending_local receipt means the DSH outbox stored it for retry. Check bridge_status for remote delivery.'
       : name === 'bridge_status' ? ' DSH also reports pending_local and local_failed for its own persisted outbound messages.' : ''),
@@ -212,13 +217,18 @@ export async function apply(ctx, config = {}) {
     execute: (name, args, execution) => tracked(() => {
       insist(!closed, 'HOST_CLOSED', 'DSH plugin was unloaded');
       const scope = scopes.get(sessionId);
-      if (name === 'bridge_sync_history') return historySync.execute(args, {
-        scope, signal: execution?.signal, call: (tool, parameters) => {
-          insist(!closed, 'HOST_CLOSED', 'DSH plugin was unloaded');
-          execution?.signal?.throwIfAborted();
-          return requestTool(sessionId, binding, tool, parameters);
-        },
-      });
+      if (name === 'bridge_sync_history') {
+        object(args, 'history sync arguments');
+        keys(args, ['archive_id', 'batch_id'], 'history sync arguments');
+        const input = args.archive_id === undefined ? args : { ...args, budgetBytes: MAX_HISTORY_BATCH_BYTES };
+        return historySync.execute(input, {
+          scope, signal: execution?.signal, call: (tool, parameters) => {
+            insist(!closed, 'HOST_CLOSED', 'DSH plugin was unloaded');
+            execution?.signal?.throwIfAborted();
+            return requestTool(sessionId, binding, tool, parameters);
+          },
+        });
+      }
       if (name === 'bridge_publish') {
         insist(outbox, 'OUTBOX_UNAVAILABLE', 'The local DSH outbox could not be opened');
         return outbox.publish(scope, args, publishArgs => requestTool(sessionId, binding, name, publishArgs));

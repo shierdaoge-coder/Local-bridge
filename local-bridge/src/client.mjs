@@ -15,7 +15,11 @@ export class BridgeClient {
     if (!response.ok || !value.ok) { const error = new Error(value.message || value.error); error.code = value.error; error.status = response.status; throw error; }
     return path === '/api/health' ? value : value.result;
   }
-  async connect(endpointId, credential) { this.connection = await this.request('/api/connect', { method: 'POST', body: { endpoint_id: endpointId }, credential }); return this.connection; }
+  async connect(endpointId, credential, { requireOffline = false } = {}) {
+    const body = { endpoint_id: endpointId, ...(requireOffline ? { require_offline: true } : {}) };
+    this.connection = await this.request('/api/connect', { method: 'POST', body, credential });
+    return this.connection;
+  }
   publish(body) { return this.request('/api/publish', { method: 'POST', body }); }
   receive(body = {}) { return this.request('/api/receive', { method: 'POST', body }); }
   acknowledge(body) { return this.request('/api/ack', { method: 'POST', body }); }

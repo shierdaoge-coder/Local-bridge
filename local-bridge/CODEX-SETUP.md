@@ -24,3 +24,7 @@
 5. 可以运行 `node scripts/check-codex-readiness.mjs --plugin-data "ABSOLUTE_CODEX_PLUGIN_DATA" --service-url http://127.0.0.1:4780`，检查生成文件、私密绑定和服务状态。检查不显示凭据。会话内的 `bridge_context` 可核对实际绑定。
 
 在该端构建使用的 `src/history-sync.py` 中设 `AUTO_SYNC_HISTORY = True` 可启用自动原文同步。需要指定解释器时，在 `ABSOLUTE_CODEX_PLUGIN_DATA` 目录下创建 `history-sync.json`，填写 `{"python_path": "ABSOLUTE_PYTHON_EXECUTABLE"}`，把占位符换成目标机器上 Python 3 可执行文件的绝对路径。保留默认开关时，仍可手动领取原文或使用通讯。
+
+## 由 Codex 启动共享服务
+
+在该端的私密绑定目录按 [共享服务](SHARED-SERVICE.md) 配置 `service-start.json`。MCP 在本地服务拒绝连接时检查归属并尝试启动监督进程。

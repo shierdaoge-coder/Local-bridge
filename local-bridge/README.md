@@ -8,6 +8,8 @@ local-bridge 在已绑定的 Codex 与 DeepSeek Harness（DSH）会话之间同�
 
 以包含 `README.md` 和 `package.json` 的目录为项目根目录。本文和两端接入文档中的相对命令路径从这里解析。执行命令或保存 JSON 之前，把 `ABSOLUTE_...` 换成目标机器上的实际绝对路径，并保留引号。在 JSON 中，Windows 路径可以使用正斜线 `/`，也可以将每个反斜线写成 `\\`。
 
+Codex 或 DSH 均可单独安装并启动同一个本地服务。需要向未安装插件的一端投递时，在配置中明确登记配对、方向和目标原生运行时。具体见 [共享服务与单端接入](SHARED-SERVICE.md)。
+
 ## 准备共享服务
 
 在项目外的私密目录创建一个启动配置。以下是仅开启双向通讯的配置骨架。将每个 `native_session_id` 换成目标宿主中的实际会话 ID，并为 `adminToken` 和两个 `credential` 各自生成一个随机值。可多次运行 `node -e "console.log(require('node:crypto').randomBytes(32).toString('base64url'))"`。

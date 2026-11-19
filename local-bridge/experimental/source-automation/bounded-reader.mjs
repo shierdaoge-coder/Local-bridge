@@ -1,6 +1,7 @@
 // Staged prototype: not imported by the active service or either installed adapter.
-import { open, stat } from 'node:fs/promises';
+import { open, readFile, readdir, stat } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
+import { join } from 'node:path';
 import { zstdDecompressSync } from 'node:zlib';
 import { visibleMessage } from '../../src/history.mjs';
 import { BridgeError, insist, integer, text, digest, canonical } from '../../src/protocol.mjs';
@@ -31,6 +32,21 @@ export function candidateVisibleMessage(row, format) {
   });
   return kept.length === content.length ? visibleMessage(row, format)
     : visibleMessage({ ...row, payload: { ...payload, content: kept } }, format);
+}
+
+async function nativeDeliveryExclusions(directory, path, start, finish) {
+  if (!directory) return [];
+  let files;
+  try { files = await readdir(directory); }
+  catch (error) { if (error.code === 'ENOENT') return []; throw error; }
+  const archivesEqual = (left, right) => process.platform === 'win32' ? left.toLowerCase() === right.toLowerCase() : left === right;
+  const result = [];
+  for (const file of files.filter(name => /^[a-f0-9]{64}\.json$/.test(name))) {
+    const entry = JSON.parse(await readFile(join(directory, file), 'utf8'));
+    if (typeof entry.archive === 'string' && archivesEqual(entry.archive, path) && Number.isSafeInteger(entry.begin)
+      && entry.begin < finish && start < (entry.end ?? Infinity)) result.push(entry);
+  }
+  return result;
 }
 
 class Cursor {
@@ -111,7 +127,7 @@ export async function readBoundedPage(path, { archive_id, generation, format, ch
   maxDecodedBytes = 1024 * 1024, maxEncodedUnitBytes = maxDecodedBytes + 65536,
   maxVisibleRecords = 200, chunkBytes = 65536, maxPrefixBytes = 256 * 1024 * 1024,
   maxReadBytes = maxPrefixBytes + maxEncodedUnitBytes * 2 + chunkBytes,
-  afterRead, expectedFileIdentity, expectedHeaderSha256, snapshotBytes } = {}) {
+  afterRead, expectedFileIdentity, expectedHeaderSha256, snapshotBytes, nativeReceiptDirectory } = {}) {
   text(archive_id, 'archive_id', 256); text(generation, 'generation', 256);
   insist(['codex-jsonl', 'dsh-zstd'].includes(format), 'INVALID_INPUT', 'Unknown source format');
   for (const [key, value] of Object.entries({ maxDecodedBytes, maxEncodedUnitBytes, maxVisibleRecords,
@@ -137,6 +153,8 @@ export async function readBoundedPage(path, { archive_id, generation, format, ch
       insist(before.size >= BigInt(snapshotBytes) && previous.byte_offset <= snapshotBytes, 'SOURCE_REPLACED', 'Initial source boundary was truncated');
     }
     const cursor = new Cursor(handle, snapshotBytes ?? Number(before.size), 0, chunkBytes, maxReadBytes);
+    // Snapshot the file before reading receipts. Dispatch writes its exclusion before appending native input.
+    const exclusions = await nativeDeliveryExclusions(nativeReceiptDirectory, path, previous.byte_offset, cursor.size);
     const hash = createHash('sha256');
     while (cursor.position < previous.byte_offset) hash.update(await cursor.exact(Math.min(chunkBytes, previous.byte_offset - cursor.position)));
     cursor.stats.prefix_bytes_verified = previous.byte_offset;
@@ -182,6 +200,8 @@ export async function readBoundedPage(path, { archive_id, generation, format, ch
         let row;
         try { row = JSON.parse(raw); } catch { throw new BridgeError('CORRUPT_ARCHIVE', 'Malformed committed JSONL record'); }
         const message = candidateVisibleMessage(row, format);
+        if (message && exclusions.some(entry => end >= entry.begin && cursor.position <= (entry.end ?? Infinity)
+          && digest(message.text) === (message.role === 'user' ? entry.prompt_sha : entry.reply_sha))) return;
         if (message) pending.push({ seq: visible + pending.length, ...message,
           source_ref: { archive_id, start_line: line + index + 1, end_line: line + index + 1, sha256: digest(Buffer.from(raw)) } });
       });

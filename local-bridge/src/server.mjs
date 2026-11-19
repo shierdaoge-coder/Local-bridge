@@ -85,7 +85,11 @@ export function createBridgeServer({ core, adminToken, indexer, codex, dsh, port
         if (!indexer) throw new BridgeError('CAPABILITY_MISSING', 'Source indexer is not configured');
         result = await indexer.scan(decodeURIComponent(path.split('/')[3]), await body(request));
       }
-      else if (request.method === 'POST' && path === '/api/connect') { const data = await body(request); result = core.connect(data.endpoint_id, bearer(request)); }
+      else if (request.method === 'POST' && path === '/api/connect') {
+        const data = await body(request);
+        result = core.connect(data.endpoint_id, bearer(request), { requireOffline: data.require_offline });
+      }
+      else if (request.method === 'POST' && path === '/api/disconnect') result = core.disconnect(connection(request));
       else if (request.method === 'GET' && path === '/api/session') result = core.sessionInfo(connection(request));
       else if (request.method === 'POST' && path === '/api/heartbeat') result = core.heartbeat(connection(request));
       else if (request.method === 'POST' && path === '/api/publish') result = core.publish(connection(request), await body(request));

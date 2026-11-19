@@ -17,7 +17,7 @@ async function directory(t) {
   return dir;
 }
 
-test('DSH development package is reproducible, small, and refuses conflicting content', async t => {
+test('DSH development package contains the shared runtime and refuses conflicting content', async t => {
   const dir = await directory(t), root = path.join(dir, 'bundle');
   const options = { sdkEntry: path.join(dir, 'fixture-sdk', 'index.js') };
   const built = await buildDsh(root, options); await buildDsh(root, options);
@@ -26,7 +26,10 @@ test('DSH development package is reproducible, small, and refuses conflicting co
   const patch = await readFile(path.join(root, 'cordis.patch.yml'), 'utf8');
   assert.ok(patch.includes(JSON.stringify(path.join(root, 'PLUGIN_DATA/bridge.json'))));
   assert.ok(patch.includes(JSON.stringify(options.sdkEntry)));
-  assert.ok(built.files < 14); assert.deepEqual((await readdir(root)).sort(), ['PLUGIN_DATA', 'README.md', 'cordis.patch.yml', 'package.json', 'src'].sort());
+  assert.equal(manifest.engines.dsh, '0.2.1-rc.3 || 0.2.2-rc.3');
+  assert.ok(built.files < 50);
+  assert.deepEqual((await readdir(root)).sort(), ['PLUGIN_DATA','README.md','SHARED-SERVICE.md','cordis.patch.yml','experimental','package.json','scripts','src','web'].sort());
+  await readFile(path.join(root, 'scripts/shared-service.mjs'));
   assert.deepEqual(await readFile(path.join(root, 'src/history-sync.py')), await readFile(new URL('../src/history-sync.py', import.meta.url)));
   assert.deepEqual(await readFile(path.join(root, 'src/dsh-plugin.mjs')), await readFile(new URL('../src/dsh-plugin.mjs', import.meta.url)));
   await writeFile(path.join(root, 'src/dsh-plugin.mjs'), 'operator changed this');
